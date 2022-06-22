@@ -1,0 +1,226 @@
+<html>
+  <head>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <h2>Koinos coin flipper</h2>
+
+    <div class="group">
+      <table>
+        <tr>
+          <td><label for="address">Address:</label></td>
+          <td><input id="address" type="text" readonly="readonly" onclick="accountHelp()" size="45"/></td>
+          <td><button onclick="getAccounts()">Choose account</button></td>
+        </tr>
+        <tr>
+          <td><label for="wager">Wager:</label></td>
+          <td><input id="wager" type="number" /></td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><label for="value">Bet:</label></td>
+          <td><select name="value" id="value"><option value="heads">Heads</option><option value="tails">Tails</option></select></td>
+        </tr>
+      </table>
+      <div><button onclick="flip()">Flip coin!</button></div>
+      <!-- <table>
+        <tr>
+          <td><button onclick="flip()">Flip</button></td>
+        </tr>
+      </table> -->
+    </div>
+    <div id="result"></div>
+    <script src="js/kondor.min.js"></script>
+    <script src="js/koinos.min.js"></script>
+    <script>
+      const inputAddress = document.getElementById("address");
+      const inputWager = document.getElementById("wager");
+      const inputValue = document.getElementById("value");
+      const elResult = document.getElementById("result");
+
+      const koin = new Contract({
+        id: "19JntSm8pSNETT9aHTwAUHC5RMoaSmgZPJ",
+        abi: utils.tokenAbi,
+        provider: kondor.provider,
+        signer: kondor.getSigner(inputAddress.value),
+      }).functions;
+
+      const divResult = {
+        hide: () => elResult.setAttribute("style", "display:none;"),
+        show: (msg) => {
+          elResult.innerHTML = msg;
+          elResult.setAttribute("style", "display:block;");
+        },
+      };
+      divResult.hide();
+
+      async function accountHelp() {
+        divResult.show(`Use the 'Choose account' button to select the address`);
+      }
+
+      async function getAccounts() {
+        divResult.hide();
+        try {
+          const accounts = await kondor.getAccounts();
+          console.log(accounts);
+          if (accounts.length > 0) {
+            inputAddress.value = accounts[0].address;
+            const { result } = await koin.balanceOf({ owner: accounts[0].address });
+            console.log(result);
+            let myBalance = (result.value / 100000000).toFixed(8);
+            divResult.show(`Account balance: ${myBalance}`);
+          }
+          //divResult.show(`Accounts: ${JSON.stringify(accounts)}`);
+        } catch (error) {
+          divResult.show(`Error: ${error.message}`);
+          console.error(error);
+        }
+      }
+
+      async function flip() {
+        const gambleAbi = {
+          methods: {
+            flip: {
+              entry_point: 0x4e448897,
+              argument: "gamble.flip_arguments",
+              return: "gamble.flip_result",
+              read_only: false,
+            },
+          },
+          koilib_types: {
+              nested: {
+                  gamble: {
+                      nested: {
+                          flip_arguments: {
+                              fields: {
+                                  address: {
+                                      type: "bytes",
+                                      id: 1,
+                                      options: {
+                                        "(koinos.btype)": "ADDRESS"
+                                      }
+                                  },
+                                  wager: {
+                                      type: "uint64",
+                                      id: 2,
+                                      options: {
+                                        "jstype": "JS_STRING"
+                                      }
+                                  },
+                                  heads: {
+                                      type: "bool",
+                                      id: 3
+                                  }
+                              }
+                          },
+                          flip_result: {
+                              fields: {}
+                          },
+                      }
+                  }
+              }
+          }
+        };
+        divResult.hide();
+        try {
+          // contract definition
+          const gamble = new Contract({
+            id: "1PyX2kxxNrp53JTSqcpKpkWneQCdZGCkoc",
+            abi: gambleAbi,
+            provider: kondor.provider,
+            signer: kondor.getSigner(inputAddress.value),
+          }).functions;
+
+          // transfer
+          const { transaction, receipt } = await gamble.flip(
+            {
+              address: inputAddress.value,
+              wager: inputWager.value,
+              heads: inputValue.value == "heads" ? true : false,
+            },
+            {
+              payer: inputAddress.value,
+            }
+          );
+          console.log(`Transaction ${transaction.id} submitted. Receipt:`);
+          console.log(receipt);
+
+          if (receipt.logs) throw new Error(receipt.logs.join(", "));
+
+          divResult.show(
+            `Transaction ${transaction.id} submitted. <br/>Waiting to be mined...`
+          );
+
+          // wait to be mined
+          const blockNumber = await transaction.wait();
+          console.log(`Mined in block ${blockNumber}`);
+          divResult.show(
+            `Transaction <a href="https://koinosexplorer.com/tx/${transaction.id}" target="_blank">${transaction.id}</a> submitted. <br/>Mined in block <a href="https://koinosexplorer.com/block/${blockNumber}" target="_blank">${blockNumber}</a>"...`
+          );
+
+          // read the balance
+          const { result } = await koin.balanceOf({ owner: inputAddress.value });
+          console.log(result);
+          let myBalance = result.value / 100000000;
+          divResult.show(
+            `Transaction <a href="https://koinosexplorer.com/tx/${transaction.id}" target="_blank">${transaction.id}</a> submitted. <br/>Mined in block <a href="https://koinosexplorer.com/block/${blockNumber}" target="_blank">${blockNumber}</a>. <br/>New balance ${myBalance} tKOIN.`
+          );
+
+          const head = await kondor.provider.getHeadInfo();
+          let headId = head.head_topology.id;
+          let params = {
+            head_block_id: headId,
+            ancestor_start_height: blockNumber,
+            num_blocks: 1,
+            return_block: false,
+            return_receipt: true
+          }
+          const rpcResponse = await kondor.provider.call("block_store.get_blocks_by_height", params);
+          console.log(rpcResponse);
+
+          let blockItems = rpcResponse.block_items;
+
+          for (let i = 0; i < blockItems.length; i++) {
+            for (let j = 0; j < blockItems[i].receipt.transaction_receipts.length; j++) {
+              if (blockItems[i].receipt.transaction_receipts[j].id == transaction.id) {
+                if (blockItems[i].receipt.transaction_receipts[j].events.length == 1) {
+                  if (blockItems[i].receipt.transaction_receipts[j].events[0].name == "koin.transfer") {
+                    let serializer = new Serializer(utils.tokenAbi.koilib_types);
+                    let transferEvent = serializer.deserialize(blockItems[i].receipt.transaction_receipts[j].events[0].data, "koinos.contracts.token.transfer_event", {bytesConversion: true});
+                    console.log(blockItems[i].receipt.transaction_receipts[j].events[0].data);
+                    console.log(transferEvent);
+
+                    transferEvent.then((result) => {
+                      let resultMessage = "";
+                      if (result.to === inputAddress.value) {
+                        resultMessage = "You've won ";
+                      }
+                      else {
+                        resultMessage = "You've lost ";
+                      }
+                      let winnings = (result.value / 100000000).toFixed(8);
+                      resultMessage += `${winnings} tKOIN.`;
+                      divResult.show(`Transaction <a href="https://koinosexplorer.com/tx/${transaction.id}" target="_blank">${transaction.id}</a> submitted. <br/>Mined in block <a href="https://koinosexplorer.com/block/${blockNumber}" target="_blank">${blockNumber}</a>. <br/>New balance ${myBalance} tKOIN. <br/>${resultMessage}`);
+                    });
+                  }
+                  else {
+                    throw Error('Only event should be a KOIN transfer');
+                  }
+                }
+                else {
+                  throw Error('Should only be 1 event');
+                }
+              }
+              else {
+                throw Error('Transaction ID mismatch');
+              }
+            }
+          }
+        } catch (error) {
+          divResult.show(`Error: ${error.message}`);
+          console.error(error);
+        }
+      }
+    </script>
+  </body>
+</html>

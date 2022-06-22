@@ -1,0 +1,40 @@
+<html>
+  <body>
+    <script src="js/koinos.js"></script>
+    <script>
+      const serializers = {};
+      window.addEventListener("message", async function (event) {
+        const { command, id, args } = event.data;
+        // check if it is a MessageRequest
+        if (!command) return;
+
+        let message = { id };
+
+        try {
+          const { serId, serArgs } = args;
+          let result = undefined;
+          switch (command) {
+            case "newSerializer":
+              serializers[serId] = new Serializer(...serArgs);
+              result = 0;
+              break;
+            case "serialize":
+              result = await serializers[serId].serialize(...serArgs);
+              break;
+            case "deserialize":
+              result = await serializers[serId].deserialize(...serArgs);
+              break;
+            default:
+              break;
+          }
+          message.result = result;
+          event.source.postMessage({ id, result }, event.origin);
+        } catch (error) {
+          message.error = error.message;
+        }
+        if (message.result === undefined && !message.error) return;
+        event.source.postMessage(message, event.origin);
+      });
+    </script>
+  </body>
+</html>
